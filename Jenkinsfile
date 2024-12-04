@@ -7,54 +7,71 @@ pipeline {
     }
 
     stages {
+        stage('Determine Branch') {
+            steps {
+                script {
+                    BRANCH_NAME = env.BRANCH_NAME
+                    echo "Running pipeline for branch: ${BRANCH_NAME}" // Logs branch name only (safe)
+                }
+            }
+        }
+
         stage('Build Docker Image') {
+            when {
+                anyOf {
+                    branch 'feature'
+                    branch 'master'
+                }
+            }
             steps {
                 script {
                     echo 'Building Docker image...'
                     withCredentials([usernamePassword(credentialsId: 'docker-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
-                        // Ensure the image name is lowercase
                         def dockerImageWithRepo = "${DOCKER_USERNAME.toLowerCase()}/${DOCKER_IMAGE.toLowerCase()}:${DOCKER_TAG.toLowerCase()}"
-                        sh """
-                            docker build -t ${dockerImageWithRepo} . > /dev/null 2>&1
-                        """
+                        sh "docker build -t ${dockerImageWithRepo} ."
                     }
                 }
             }
         }
 
         stage('Push Docker Image to Docker Hub') {
+            when {
+                branch 'master'
+            }
             steps {
                 script {
                     withCredentials([usernamePassword(credentialsId: 'docker-creds', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
                         echo 'Logging in to Docker Hub...'
-                        // Secure Docker login, do not echo sensitive variables
                         sh """
-                            echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USERNAME} --password-stdin > /dev/null 2>&1
+                            echo ${DOCKER_PASSWORD} | docker login -u ${DOCKER_USERNAME} --password-stdin
                         """
                         def dockerImageWithRepo = "${DOCKER_USERNAME.toLowerCase()}/${DOCKER_IMAGE.toLowerCase()}:${DOCKER_TAG.toLowerCase()}"
-                        // Pushing Docker image, again suppress output
-                        sh "docker push ${dockerImageWithRepo} > /dev/null 2>&1"
+                        sh "docker push ${dockerImageWithRepo}"
                     }
                 }
             }
         }
 
         stage('Deploy to Kubernetes') {
+            when {
+                branch 'master'
+            }
             steps {
-                withKubeCredentials(kubectlCredentials: [[caCertificate: '', clusterName: 'EKS-1', contextName: '', credentialsId: 'k8-token', namespace: 'auth', serverUrl: 'https://7302D1DF066773D16142E09F2D140FC0.sk1.ap-south-2.eks.amazonaws.com']]) {
+                withKubeCredentials(kubectlCredentials: [[credentialsId: 'k8-token']]) {
                     echo 'Deploying application to Kubernetes...'
-                    // Apply deployment to Kubernetes, suppress output
-                    sh "kubectl apply -f deployment-service.yml > /dev/null 2>&1"
+                    sh "kubectl apply -f deployment-service.yml"
                 }
             }
         }
 
         stage('Verify Deployment') {
+            when {
+                branch 'master'
+            }
             steps {
-                withKubeCredentials(kubectlCredentials: [[caCertificate: '', clusterName: 'EKS-1', contextName: '', credentialsId: 'k8-token', namespace: 'auth', serverUrl: 'https://7302D1DF066773D16142E09F2D140FC0.sk1.ap-south-2.eks.amazonaws.com']]) {
+                withKubeCredentials(kubectlCredentials: [[credentialsId: 'k8-token']]) {
                     echo 'Verifying deployment...'
-                    // Verify all resources in the Kubernetes auth namespace, suppress output
-                    sh "kubectl get all -n auth > /dev/null 2>&1"
+                    sh "kubectl get all -n auth"
                 }
             }
         }
@@ -72,4 +89,3 @@ pipeline {
         }
     }
 }
- // this code is worked and eployed into aws cluster
